@@ -1,265 +1,25 @@
 <?php
-/**
- * Decorates {@link AccountPage} to allow for products to be downloaded.
- */
-class Downloadable_AccountPage extends Extension {
 
-	static $allowed_actions = array (
-    'downloadProduct' => 'VIEW_ORDER'
+class Downloadable_Product extends DataExtension {
+
+
+	public static $has_many = array(
+    'Files' => 'File'
   );
-
+	
 	/**
-	 * Redirect browser to the download location, increment number of times
-	 * this item has been downloaded.
+	 * Update the CMS with form fields for extra db fields above
 	 * 
-	 * If the item has been downloaded too many times redirects back with 
-	 * error message.
-	 * 
-	 * @param SS_HTTPRequest $request
+	 * @see DataObjectDecorator::updateCMSFields()
 	 */
-	function downloadProduct(SS_HTTPRequest $request) {
-
-	  $memberID = Member::currentUserID();
-	  if (!Member::currentUserID()) {
-      return Security::permissionFailure($this->owner, 'You must be logged in to view this page.');
-    }
-	  
-	  //TODO can only download product if order has been paid for
-
-	  $controller = Controller::curr();
-
-	  $item = DataObject::get_by_id('Item', $request->requestVar('ItemID'));
-	  if ($item && $item->exists()) {
-	    
-	    $product = $item->Product();
-	    
-	    if ($product->File() && $product->File()->exists()) {
-	      
-	      if ($downloadLocation = $product->downloadLocation()) {
-    	    $item->DownloadCount = $item->DownloadCount + 1;
-    	    $item->write();
-
-    	    $controller->redirect($downloadLocation);
-    	    return;
-    	  }
-	    }
-	  }
-
-	  //TODO set an error message
-	  $controller->redirectBack();
+	function updateProductCMSFields(&$fields) {
+  	$fields->addFieldToTab('Root.Files', UploadField::create('Files', ''));
 	}
 }
 
 class Downloadable_Item extends DataExtension {
 
-	static $db = array(
-		'DownloadCount' => 'Int'
-	);
-
-	static $has_many = array(
-		'LicenseKeys' => 'Downloadable_LicenseKey'
-	);
-
 	/**
-	 * Return the link that should be used for downloading the 
-	 * virtual product represented by this item.
-	 * 
-	 * @return Mixed URL to download or false
-	 */
-	function DownloadLink() {
-
-	  if ($this->owner->DownloadCount < $this->getDownloadLimit()) {
-	    
-	    //If order is not paid do not provide access to download
-	    $order = $this->owner->Order();
-	    if (!$order->getPaid()) {
-	      return false;
-	    }
-	  
-  	  if ($accountPage = DataObject::get_one('AccountPage')) {
-  	    return $accountPage->Link() . 'downloadproduct/?ItemID='.$this->owner->ID;
-  	  }
-  	  else {
-  	    return false;
-  	  }
-	  }
-	  else {
-	    return false;
-	  }
-	}
-	
-	/**
-	 * Number of times this item can be downloaded for this order
-	 * 
-	 * @return Int
-	 */
-	function getDownloadLimit() {
-	  return Downloadable_Product::$downloadLimit * $this->owner->Quantity;
-	}
-	
-	/**
-	 * Calculate remaining number of downloads for this item
-	 * 
-	 * @return Int
-	 */
-	function RemainingDownloadLimit() {
-	  return $this->getDownloadLimit() - $this->owner->DownloadCount;
-	}
-}
-
-class Downloadable_LicenseKey extends DataObject {
-  
-  /**
-   * Storing the LicenseKey
-   * 
-   * @var Array
-   */
-  public static $db = array(
-    'LicenseKey' => 'Varchar',
-    'Number' => 'Int'
-  );
-  
-  /**
-   * License keys are associated to {@link Order}s and {@link Item}s.
-   * 
-   * @var Array
-   */
-  public static $has_one = array(
-    'Order' => 'Order',
-    'Item' => 'Item'
-  );
-
-  /**
-   * Generate unique license key before each write.
-   * 
-   * @see DataObject::onBeforeWrite()
-   */
-  function onBeforeWrite() {
-    parent::onBeforeWrite();
-    $this->LicenseKey = $this->generateLicenseKey();
-  }
-	
-  /**
-   * Generates a unique license key.
-   * 
-   * @return String
-   */
-	function generateLicenseKey() {
-	  
-    $keys = Downloadable_LicenseKey::get();
-    $existingKeys = ($keys && $keys->exists()) ? $keys->map('ID', 'LicenseKey')->toArray() : array();
-    $key = md5(date('y-m-d') . ' ' . rand (1, 9999999999));
-    
-    while (in_array($key, $existingKeys)) {
-      $key = md5(date('y-m-d') . ' ' . rand (1, 9999999999));
-    }
-    return $key;
-	}
-}
-
-class Downloadable_Order extends DataExtension {
-
-	static $has_many = array(
-		'LicenseKeys' => 'Downloadable_LicenseKey'
-	);
-  
-  /**
-   * Add fields for resetting download counts for virtual products.
-   */
-  function updateOrderCMSFields(FieldSet &$fields) {
-    
-    $downloads = $this->Downloads();
-    if ($downloads && $downloads->exists()) {
-      
-      $fields->addFieldToTab('Root.Actions', new HeaderField('DownloadCount', 'Reset Download Counts', 3));
-  		$fields->addFieldToTab('Root.Actions', new LiteralField(
-  			'UpdateDownloadLimit', 
-  			'<p>Reset the download count for items below, can be used to allow customers to download items more times.</p>'
-  		));
-  		foreach ($downloads as $item) {
-  		  $fields->addFieldToTab('Root.Actions', new TextField(
-  		  	'DownloadCountItem['.$item->ID.']', 
-  		  	'Download Count for '.$item->Product()->Title.' (download limit = '.$item->getDownloadLimit() .')', 
-  		    $item->DownloadCount
-  		  ));
-  		}
-    }
-    
-    $fields->removeByName('LicenseKeys');
-	}
-	
-	/**
-	 * Reset download counts for items in an {@link Order}.
-	 * 
-	 * @see DataObjectDecorator::onBeforeWrite()
-	 */
-  function onBeforeWrite() {
-    parent::onBeforeWrite();
-    
-    $curr = Controller::curr();
-    
-    if ($curr && $request = $curr->getRequest()) {
-      $downloadCounts = $request->postVar('DownloadCountItem');
-      
-      if ($downloadCounts && is_array($downloadCounts)) foreach ($downloadCounts as $itemID => $newCount) {
-        $item = DataObject::get_by_id('Item', $itemID);
-  	    $item->DownloadCount = $newCount;
-  	    $item->write();
-      }
-    }
-	}
-
-	/**
-	 * Retrieving the downloadable virtual products for this order
-	 * 
-	 * @return ArrayList Items for this order that can be downloaded
-	 */
-	function Downloads() {
-	  
-	  //Get items for products with files attached
-	  $virtualItems = new ArrayList();
-	  $items = $this->owner->Items();
-
-	  foreach ($items as $item) {
-	    if ($item->Product()->File() && $item->Product()->File()->exists()) {
-	      $virtualItems->push($item);
-	    }
-	  }
-	  return $virtualItems;
-	}
-	
-	/**
-	 * Write license keys when {@link Order}s are processed.
-	 */
-	function onAfterPayment() {
-	  
-	  $keys = DataObject::get('Downloadable_LicenseKey', "\"Downloadable_LicenseKey\".\"OrderID\" = " . $this->owner->ID);
-
-	  if (!$keys || !$keys->exists()) {
-  	  $items = $this->owner->Items();
-  	  if ($items && $items->exists()) foreach ($items as $item) {
-  	    
-  	    $product = $item->Product();
-  	    if ($product && $product->File()->exists()) {
-    	    $quantity = $item->Quantity;
-
-    	    for ($i = 1; $i <= $quantity; $i++) {
-    	      $licenseKey = new Downloadable_LicenseKey();
-    	      $licenseKey->ItemID = $item->ID;
-    	      $licenseKey->OrderID = $this->owner->ID;
-    	      $licenseKey->Number = $i;
-    	      $licenseKey->write();
-    	    }
-  	    }
-  	  }
-	  }
-	}
-
-}
-
-class Downloadable_Product extends DataExtension {
-
-  /**
    * Number of times the product can be downloaded
    * 
    * @var Int
@@ -275,27 +35,117 @@ class Downloadable_Product extends DataExtension {
   public static $downloadWindow = '1 day';
   
   /**
-   * Name of folder that generated files will be put into
+   * Name of folder that generated files will be put into for public download
    * 
    * @var String
    */
-  public static $folderName = 'downloads';
+  public static $downloadFolder = 'Downloads';
 
-  static $has_one = array(
-		'File' => 'File'
+	static $has_many = array(
+		'Files' => 'Downloadable_File'
 	);
-	
-	/**
-	 * Update the CMS with form fields for extra db fields above
-	 * 
-	 * @see DataObjectDecorator::updateCMSFields()
-	 */
-	function updateProductCMSFields(&$fields) {
-		$uploadField = UploadField::create('File');
-		$uploadField->setConfig('allowedMaxFileNumber', 1);
-    $fields->addFieldToTab('Root.File', $uploadField);
+
+	function createFiles() {
+
+		$files = $this->owner->Product()->Files();
+
+		if ($files && $files->exists()) foreach ($files as $file) {
+
+			//Copy file across to item
+
+			$origin = $file->getFullPath();
+	    $destination = Director::baseFolder() . '/' . ASSETS_DIR . '/' . self::$downloadFolder .'/'. $file->Name;
+
+	    if (copy($origin, $destination)) {
+
+        $downloadable = new Downloadable_File();
+        $downloadable->Name = $file->Name;
+        $downloadable->Title = $file->Title;
+        $downloadable->FileName = $destination;
+        $downloadable->ItemID = $this->owner->ID;
+        $downloadable->DownloadLimit = self::$downloadLimit * $this->owner->Quantity;
+        $downloadable->write();
+      }
+		}
 	}
-  
+}
+
+class Downloadable_File extends File {
+
+	static $db = array (
+    'LicenceKey' => 'Text',
+    'DownloadCount' => 'Int',
+    'DownloadLimit' => 'Int'
+  );
+
+	static $has_one = array (
+    'Item' => 'Item'
+  );
+
+  static $defaults = array(
+  	'DownloadCount' => 0
+  );
+
+  /**
+   * Generate unique license key before each write.
+   * 
+   * @see DataObject::onBeforeWrite()
+   */
+  function onBeforeWrite() {
+    parent::onBeforeWrite();
+
+    if (!$this->isInDB()) {
+    	$this->LicenceKey = $this->generateLicenceKey();
+    }
+  }
+	
+  /**
+   * Generates a unique license key.
+   * 
+   * @return String
+   */
+	function generateLicenceKey() {
+	  
+    $files = Downloadable_File::get();
+
+    $existingKeys = $files->column('LicenceKey');
+
+    // $existingKeys = ($keys && $keys->exists()) ? $keys->map('ID', 'LicenceKey')->toArray() : array();
+    $key = md5(date('y-m-d') . ' ' . rand (1, 9999999999));
+    
+    while (in_array($key, $existingKeys)) {
+      $key = md5(date('y-m-d') . ' ' . rand (1, 9999999999));
+    }
+    return $key;
+	}
+
+  function DownloadLink() {
+
+	  if ($this->DownloadCount < $this->DownloadLimit) {
+	    
+	    //If order is not paid do not provide access to download
+	    $order = $this->Item()->Order();
+
+	    if (!$order->getPaid()) {
+	      return false;
+	    }
+	  
+  	  if ($accountPage = DataObject::get_one('AccountPage')) {
+  	    return $accountPage->Link() . 'download/?OrderID=' . $order->ID . '&FileID=' . $this->ID;
+  	  }
+  	  else {
+  	    return false;
+  	  }
+	  }
+	  else {
+	    return false;
+	  }
+	}
+
+	function RemainingDownloadLimit() {
+	  return $this->DownloadLimit - $this->DownloadCount;
+	}
+
 	/**
 	 * Copy the downloadable file to another location on the server and
 	 * redirect browser to that location.
@@ -308,44 +158,41 @@ class Downloadable_Product extends DataExtension {
 	function downloadLocation() {
 	  
 	  //Quick cleanup of old files
-	  $this->cleanup();
+	  $this->cleanupFiles();
 	  
 	  //Get the file, copy to another location, return that new location of file
-	  $file = $this->owner->File();
-	  if ($file && $file->exists()) {
-	    
-	    $origin = $file->getFullPath();
-	    $info = pathinfo($origin);
-	    $newName = 'download_' . mt_rand(100000, 999999) .'_'. date('H-d-m-y') .'.'. $info['extension'];
-	    $destination = $info['dirname'] .'/'. $newName;
-	    
-	    //Get relative path
-	    $relOrigin = $file->getFilename();
-	    $relInfo = pathinfo($relOrigin);
-	    $relPath = $relInfo['dirname'] . '/' . $newName;
+    $origin = $this->getFullPath();
+    $info = pathinfo($origin);
+    $newName = 'downloadable_' . mt_rand(100000, 999999) .'_'. date('H-d-m-y') .'.'. $info['extension'];
+    $destination = $info['dirname'] .'/'. $newName;
+    
+    //Get relative path
+    $relOrigin = $this->getFilename();
+    $relInfo = pathinfo($relOrigin);
+    $relPath = $relInfo['dirname'] . '/' . $newName;
 
-	    if (copy($origin, $destination)) {
-        return Director::absoluteURL(Director::baseURL() . Director::makeRelative($relPath));
-      }
-	  }
+    if (copy($origin, $destination)) {
+      return Director::absoluteURL(Director::baseURL() . Director::makeRelative($relPath));
+    }
+
 	  return false;
 	}
 	
 	/**
-	 * Go through assets/ directory and cleanup download_* files older than download window.
+	 * Go through assets/ directory and cleanup downloadable_* files older than download window.
 	 * Could be used as a task/cron job.
 	 */
-	public function cleanup() {
+	public function cleanupFiles() {
 	  
 	  //go through assets/ dir and find download_* files
 	  $dir = Director::baseFolder() . '/assets/';
-	  $pattern = 'download_*';
-	  $files = $this->find($dir, $pattern);
+	  $pattern = 'downloadable_*';
+	  $files = $this->findFile($dir, $pattern);
 
 	  if ($files && is_array($files)) foreach ($files as $file) {
 	    $filelastmodified = filemtime($file);
 
-	    if($filelastmodified < strtotime('-'.self::$downloadWindow)) {
+	    if($filelastmodified < strtotime('-'.Downloadable_Item::$downloadWindow)) {
         unlink($file);
       }
 	  }
@@ -361,7 +208,7 @@ class Downloadable_Product extends DataExtension {
    * @param string $pattern - pattern to search
    * @return array containing all pattern-matched files
    */
-  function find($dir, $pattern){
+  function findFile($dir, $pattern){
 
     $dir = escapeshellcmd($dir);
     $files = shell_exec("find $dir -name '$pattern' -print");
@@ -371,4 +218,86 @@ class Downloadable_Product extends DataExtension {
     
     return $files;
   }
+
 }
+
+class Downloadable_Order extends DataExtension {
+
+	function onAfterPayment() {
+
+		$items = $this->owner->Items();
+		if ($items && $items->exists()) foreach ($items as $item) {
+			$item->createFiles();
+		}
+	}
+
+	function Downloads() {
+
+		//Get items for products with files attached
+	  $downloads = new ArrayList();
+
+	  $items = $this->owner->Items();
+		if ($items && $items->exists()) foreach ($items as $item) {
+
+	  	$files = $item->Files();
+	  	if ($files->exists()) foreach ($files as $file) {
+	  		$downloads->push($file);
+	  	}
+	  }
+	  return $downloads;
+	}
+
+}
+
+class Downloadable_AccountPage extends Extension {
+
+	static $allowed_actions = array (
+    'download' => 'VIEW_ORDER'
+  );
+
+	/**
+	 * Redirect browser to the download location, increment number of times
+	 * this item has been downloaded.
+	 * 
+	 * If the item has been downloaded too many times redirects back with 
+	 * error message.
+	 * 
+	 * @param SS_HTTPRequest $request
+	 */
+	function download(SS_HTTPRequest $request) {
+
+		$controller = Controller::curr();
+	  $memberID = Member::currentUserID();
+
+	  if (!$memberID) {
+      return Security::permissionFailure($this->owner, 'You must be logged in to view this page.');
+    }
+	  
+	  //Can only download if order has been paid for
+	  $order = Order::get()
+	  	->where("\"ID\" = " . $request->requestVar('OrderID'))
+	  	->first();
+
+	  if (!$order || !$order->exists() || !$order->getPaid() || $order->MemberID != $memberID) {
+	  	return Security::permissionFailure($this->owner, 'You do not have access to download this file.');
+	  }
+
+	  $file = Downloadable_File::get()
+	  	->where("\"File\".\"ID\" = " . $request->requestVar('FileID'))
+	  	->first();
+
+	  if ($file && $file->exists()) {
+
+	  	if ($downloadLocation = $file->downloadLocation()) {
+  	    $file->DownloadCount = $file->DownloadCount + 1;
+  	    $file->write();
+
+  	    $controller->redirect($downloadLocation);
+  	    return;
+  	  }
+	  }
+
+	  $controller->redirectBack();
+	}
+}
+
