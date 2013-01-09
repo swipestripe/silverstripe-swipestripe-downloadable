@@ -10,7 +10,7 @@
   <tbody>
     <% loop Downloads %>  
       <tr>
-        <td>$Name</td>
+        <td>$Title</td>
         <td>$LicenceKey</td>
         <td>$DownloadLimit <br />($RemainingDownloadLimit downloads remaining)</td>
 

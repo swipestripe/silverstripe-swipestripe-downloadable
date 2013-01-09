@@ -13,8 +13,17 @@ class Downloadable_Product extends DataExtension {
 	 * @see DataObjectDecorator::updateCMSFields()
 	 */
 	function updateProductCMSFields(&$fields) {
-  	$fields->addFieldToTab('Root.Files', UploadField::create('Files', ''));
+  	$fields->addFieldToTab('Root.Files', UploadField::create('Files', '')
+  		->setFolderName(Downloadable_Item::$uploadFolder)
+  	);
 	}
+}
+
+class Downloadabale_FileExtension extends DataExtension {
+
+	public static $has_one = array(
+    'ProductPage' => 'Product'
+  );
 }
 
 class Downloadable_Item extends DataExtension {
@@ -41,6 +50,10 @@ class Downloadable_Item extends DataExtension {
    */
   public static $downloadFolder = 'Downloads';
 
+  public static $productFolder = 'Products';
+
+  public static $uploadFolder = 'Uploads';
+
 	static $has_many = array(
 		'Files' => 'Downloadable_File'
 	);
@@ -51,17 +64,19 @@ class Downloadable_Item extends DataExtension {
 
 		if ($files && $files->exists()) foreach ($files as $file) {
 
-			//Copy file across to item
+			$parentFolder = Folder::find_or_make(self::$productFolder);
 
 			$origin = $file->getFullPath();
-	    $destination = Director::baseFolder() . '/' . ASSETS_DIR . '/' . self::$downloadFolder .'/'. $file->Name;
+	    $destination = $parentFolder->getFullPath() . $file->Name . '.dwn';
 
 	    if (copy($origin, $destination)) {
 
         $downloadable = new Downloadable_File();
-        $downloadable->Name = $file->Name;
+        $downloadable->ParentID = $parentFolder ? $parentFolder->ID : 0;
+        $downloadable->Name = $file->Name . '.dwn';
+        $downloadable->Ext = pathinfo($file->Name, PATHINFO_EXTENSION);
         $downloadable->Title = $file->Title;
-        $downloadable->FileName = $destination;
+        $downloadable->FileName = $parentFolder->getRelativePath() . $file->Name . '.dwn';
         $downloadable->ItemID = $this->owner->ID;
         $downloadable->DownloadLimit = self::$downloadLimit * $this->owner->Quantity;
         $downloadable->write();
@@ -75,7 +90,8 @@ class Downloadable_File extends File {
 	static $db = array (
     'LicenceKey' => 'Text',
     'DownloadCount' => 'Int',
-    'DownloadLimit' => 'Int'
+    'DownloadLimit' => 'Int',
+    'Ext' => 'Varchar'
   );
 
 	static $has_one = array (
@@ -143,7 +159,9 @@ class Downloadable_File extends File {
 	}
 
 	function RemainingDownloadLimit() {
-	  return $this->DownloadLimit - $this->DownloadCount;
+	  $remaining = $this->DownloadLimit - $this->DownloadCount;
+	  if ($remaining < 0) $remaining = 0;
+	  return $remaining;
 	}
 
 	/**
@@ -156,25 +174,23 @@ class Downloadable_File extends File {
 	 * @see VirtualProductCleanupTask
 	 */
 	function downloadLocation() {
-	  
+
 	  //Quick cleanup of old files
 	  $this->cleanupFiles();
 	  
 	  //Get the file, copy to another location, return that new location of file
-    $origin = $this->getFullPath();
-    $info = pathinfo($origin);
-    $newName = 'downloadable_' . mt_rand(100000, 999999) .'_'. date('H-d-m-y') .'.'. $info['extension'];
-    $destination = $info['dirname'] .'/'. $newName;
-    
-    //Get relative path
-    $relOrigin = $this->getFilename();
-    $relInfo = pathinfo($relOrigin);
-    $relPath = $relInfo['dirname'] . '/' . $newName;
+	  $origin = $this->getFullPath();
+
+	  $folderPath = ASSETS_PATH . "/" . Downloadable_Item::$downloadFolder;
+		if(!file_exists($folderPath)){
+			mkdir($folderPath, Filesystem::$folder_create_mask);
+		}
+
+    $destination = $folderPath .'/'. 'downloadable_' . mt_rand(100000, 999999) .'_'. date('H-d-m-y') .'.'. $this->Ext;
 
     if (copy($origin, $destination)) {
-      return Director::absoluteURL(Director::baseURL() . Director::makeRelative($relPath));
+      return Director::absoluteURL(Director::baseURL() . Director::makeRelative($destination));
     }
-
 	  return false;
 	}
 	
@@ -184,8 +200,9 @@ class Downloadable_File extends File {
 	 */
 	public function cleanupFiles() {
 	  
-	  //go through assets/ dir and find download_* files
-	  $dir = Director::baseFolder() . '/assets/';
+	  //go through assets/ dir and find downloadable_* files
+
+	  $dir = ASSETS_PATH . "/";
 	  $pattern = 'downloadable_*';
 	  $files = $this->findFile($dir, $pattern);
 
@@ -289,6 +306,7 @@ class Downloadable_AccountPage extends Extension {
 	  if ($file && $file->exists()) {
 
 	  	if ($downloadLocation = $file->downloadLocation()) {
+
   	    $file->DownloadCount = $file->DownloadCount + 1;
   	    $file->write();
 
