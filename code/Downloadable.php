@@ -3,12 +3,12 @@
 class Downloadable_Product extends DataExtension {
 
 
-	public static $has_many = array(
+	public static $many_many = array(
     'Files' => 'File'
   );
 	
 	/**
-	 * Update the CMS with form fields for extra db fields above
+	 * Update the CMS with form fields for extra db fields
 	 * 
 	 * @see DataObjectDecorator::updateCMSFields()
 	 */
@@ -21,8 +21,8 @@ class Downloadable_Product extends DataExtension {
 
 class Downloadabale_FileExtension extends DataExtension {
 
-	public static $has_one = array(
-    'ProductPage' => 'Product'
+	public static $belongs_many_many = array(
+    'ProductPage' => 'Page'
   );
 }
 
