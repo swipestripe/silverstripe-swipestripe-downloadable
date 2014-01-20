@@ -1,0 +1,21 @@
+---
+name: SwipeStripe Downloadable
+---
+
+Product:
+  extensions: 
+    - 'Downloadable_Product'
+File:
+  extensions: 
+    - 'Downloadabale_FileExtension'
+  allowed_extensions: 
+    - 'dwn'
+Item:
+  extensions: 
+    - 'Downloadable_Item'
+Order:
+  extensions: 
+    - 'Downloadable_Order'
+AccountPage_Controller:
+  extensions: 
+    - 'Downloadable_AccountPage'
